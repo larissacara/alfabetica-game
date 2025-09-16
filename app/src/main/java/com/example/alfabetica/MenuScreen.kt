@@ -222,25 +222,24 @@ fun GameScreen(
 
             Spacer(Modifier.height(gutter * 1.4f))
 
-            // Grid fixo 3x9 (27 posições): A..Z + Timer no centro da segunda fileira
+            // Layout adaptativo baseado nas letras selecionadas
             @Suppress("UnusedBoxWithConstraintsScope")
             BoxWithConstraints(Modifier.weight(1f)) {
-                val cols = 9
-                val rows = 3
-                val totalPositions = cols * rows // 27
-                val centerIndex = (rows / 2) * cols + (cols / 2) // 13
-
                 val innerPad = gutter
                 val availWidth = maxWidth - innerPad * 2
                 val availHeight = maxHeight - innerPad * 2
 
-                val cellWidth = (availWidth - gutter * (cols - 1)) / cols
+                // Letras vindas do menu Ajustes (em ordem alfabética)
+                val displayLetters = remember(selectedLetters) { selectedLetters.sorted() }
+                val totalLetters = displayLetters.size
+                
+                // Calcular distribuição adaptativa das letras
+                val layoutInfo = remember(totalLetters) { calculateAdaptiveLayout(totalLetters) }
+                
+                val rows = 3
                 val rowHeight = ((availHeight - gutter * (rows - 1)) / rows).coerceAtLeast(minTouchTarget)
                 val minRowHeight = (h.value * 0.08f).coerceIn(40f, 60f).dp
                 val finalRowHeight = maxOf(rowHeight, minRowHeight)
-
-                // Letras vindas do menu Ajustes (em ordem alfabética)
-                val displayLetters = remember(selectedLetters) { selectedLetters.sorted() }
 
                 Column(
                     Modifier
@@ -248,53 +247,44 @@ fun GameScreen(
                         .padding(all = innerPad),
                     verticalArrangement = Arrangement.spacedBy(gutter)
                 ) {
-                    repeat(rows) { r ->
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(finalRowHeight),
-                            horizontalArrangement = Arrangement.spacedBy(gutter),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            repeat(cols) { c ->
-                                val index = r * cols + c
-                                if (index == centerIndex) {
-                                    // Timer fixo no centro da segunda fileira
-                                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                        val timerSize = minOf(finalRowHeight, cellWidth) * 0.92f
-                                        TimerTile(
-                                            totalSeconds = GameSettings.timerDuration,
-                                            secondsLeft = secondsLeft,
-                                            running = isTimerRunning,
-                                            size = timerSize,
-                                            onToggle = {
-                                                if (!isTimerRunning || secondsLeft == 0) {
-                                                    secondsLeft = GameSettings.timerDuration
-                                                }
-                                                isTimerRunning = !isTimerRunning
-                                            }
-                                        )
-                                    }
-                                } else {
-                                    // Letras com peso 1 para distribuição equilibrada
-                                    val letterIdx = if (index < centerIndex) index else index - 1
-                                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                        if (letterIdx < displayLetters.size) {
-                                            val ch = displayLetters[letterIdx]
-                                            LetterTile(
-                                                ch,
-                                                pickColor(letterIdx),
-                                                height = finalRowHeight,
-                                                width = cellWidth
-                                            ) { onLetter(ch) }
-                                        } else {
-                                            Spacer(modifier = Modifier.height(finalRowHeight))
-                                        }
-                                    }
-                                }
+                    // Primeira linha
+                    AdaptiveRow(
+                        letters = layoutInfo.firstRowLetters,
+                        displayLetters = displayLetters,
+                        availWidth = availWidth,
+                        gutter = gutter,
+                        rowHeight = finalRowHeight,
+                        onLetter = onLetter
+                    )
+                    
+                    // Segunda linha (com timer no centro)
+                    AdaptiveRowWithTimer(
+                        letters = layoutInfo.secondRowLetters,
+                        displayLetters = displayLetters,
+                        availWidth = availWidth,
+                        gutter = gutter,
+                        rowHeight = finalRowHeight,
+                        timerDuration = GameSettings.timerDuration,
+                        secondsLeft = secondsLeft,
+                        isTimerRunning = isTimerRunning,
+                        onLetter = onLetter,
+                        onTimerToggle = {
+                            if (!isTimerRunning || secondsLeft == 0) {
+                                secondsLeft = GameSettings.timerDuration
                             }
+                            isTimerRunning = !isTimerRunning
                         }
-                    }
+                    )
+                    
+                    // Terceira linha
+                    AdaptiveRow(
+                        letters = layoutInfo.thirdRowLetters,
+                        displayLetters = displayLetters,
+                        availWidth = availWidth,
+                        gutter = gutter,
+                        rowHeight = finalRowHeight,
+                        onLetter = onLetter
+                    )
                 }
             }
         }
@@ -1508,6 +1498,185 @@ private fun PartySparkles(count: Int, speed: Float) {
                 cap = StrokeCap.Round
             )
             drawCircle(p.color.copy(alpha = 0.9f), radius = p.radius, center = Offset(x, y))
+        }
+    }
+}
+
+// =================== ADAPTIVE LAYOUT ===================
+
+data class LayoutInfo(
+    val firstRowLetters: Int,
+    val secondRowLetters: Int,
+    val thirdRowLetters: Int
+)
+
+/**
+ * Calcula a distribuição adaptativa das letras em 3 linhas
+ * Garante que a linha do meio tenha número par de letras para o timer ficar no centro
+ */
+private fun calculateAdaptiveLayout(totalLetters: Int): LayoutInfo {
+    if (totalLetters <= 0) {
+        return LayoutInfo(0, 0, 0)
+    }
+    
+    // Se temos poucas letras, distribuir de forma equilibrada
+    if (totalLetters <= 6) {
+        val perRow = totalLetters / 3
+        val remainder = totalLetters % 3
+        return when (remainder) {
+            0 -> LayoutInfo(perRow, perRow, perRow)
+            1 -> LayoutInfo(perRow + 1, perRow, perRow)
+            else -> LayoutInfo(perRow + 1, perRow + 1, perRow)
+        }
+    }
+    
+    // Para mais letras, priorizar a linha do meio com número par
+    val targetMiddleRow = if (totalLetters % 2 == 0) {
+        // Se total é par, linha do meio pode ter mais letras
+        (totalLetters * 0.4f).toInt().let { if (it % 2 == 0) it else it + 1 }
+    } else {
+        // Se total é ímpar, linha do meio deve ter número par
+        ((totalLetters - 1) * 0.4f).toInt().let { if (it % 2 == 0) it else it + 1 }
+    }
+    
+    val remainingLetters = totalLetters - targetMiddleRow
+    val firstRow = remainingLetters / 2
+    val thirdRow = remainingLetters - firstRow
+    
+    return LayoutInfo(firstRow, targetMiddleRow, thirdRow)
+}
+
+@Composable
+private fun AdaptiveRow(
+    letters: Int,
+    displayLetters: List<Char>,
+    availWidth: Dp,
+    gutter: Dp,
+    rowHeight: Dp,
+    onLetter: (Char) -> Unit
+) {
+    if (letters <= 0) {
+        Spacer(modifier = Modifier.height(rowHeight))
+        return
+    }
+    
+    val cellWidth = (availWidth - gutter * (letters - 1)) / letters
+    
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(rowHeight),
+        horizontalArrangement = Arrangement.spacedBy(gutter),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(letters) { index ->
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                if (index < displayLetters.size) {
+                    val ch = displayLetters[index]
+                    LetterTile(
+                        ch,
+                        pickColor(index),
+                        height = rowHeight,
+                        width = cellWidth
+                    ) { onLetter(ch) }
+                } else {
+                    Spacer(modifier = Modifier.height(rowHeight))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdaptiveRowWithTimer(
+    letters: Int,
+    displayLetters: List<Char>,
+    availWidth: Dp,
+    gutter: Dp,
+    rowHeight: Dp,
+    timerDuration: Int,
+    secondsLeft: Int,
+    isTimerRunning: Boolean,
+    onLetter: (Char) -> Unit,
+    onTimerToggle: () -> Unit
+) {
+    if (letters <= 0) {
+        // Se não há letras, mostrar apenas o timer centralizado
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(rowHeight),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val timerSize = minOf(rowHeight, availWidth * 0.15f)
+            TimerTile(
+                totalSeconds = timerDuration,
+                secondsLeft = secondsLeft,
+                running = isTimerRunning,
+                size = timerSize,
+                onToggle = onTimerToggle
+            )
+        }
+        return
+    }
+    
+    val cellWidth = (availWidth - gutter * (letters - 1)) / letters
+    val timerSize = minOf(rowHeight, cellWidth) * 0.92f
+    
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(rowHeight),
+        horizontalArrangement = Arrangement.spacedBy(gutter),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Letras antes do timer
+        val lettersBeforeTimer = letters / 2
+        repeat(lettersBeforeTimer) { index ->
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                if (index < displayLetters.size) {
+                    val ch = displayLetters[index]
+                    LetterTile(
+                        ch,
+                        pickColor(index),
+                        height = rowHeight,
+                        width = cellWidth
+                    ) { onLetter(ch) }
+                } else {
+                    Spacer(modifier = Modifier.height(rowHeight))
+                }
+            }
+        }
+        
+        // Timer no centro
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            TimerTile(
+                totalSeconds = timerDuration,
+                secondsLeft = secondsLeft,
+                running = isTimerRunning,
+                size = timerSize,
+                onToggle = onTimerToggle
+            )
+        }
+        
+        // Letras depois do timer
+        val lettersAfterTimer = letters - lettersBeforeTimer
+        repeat(lettersAfterTimer) { index ->
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                val letterIndex = lettersBeforeTimer + index
+                if (letterIndex < displayLetters.size) {
+                    val ch = displayLetters[letterIndex]
+                    LetterTile(
+                        ch,
+                        pickColor(letterIndex),
+                        height = rowHeight,
+                        width = cellWidth
+                    ) { onLetter(ch) }
+                } else {
+                    Spacer(modifier = Modifier.height(rowHeight))
+                }
+            }
         }
     }
 }
